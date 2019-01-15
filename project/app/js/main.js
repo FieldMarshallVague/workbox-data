@@ -16,6 +16,18 @@ limitations under the License.
 
 // TODO - register service worker
 
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+            .then(registration => {
+                console.log(`Service Worker registered! Scope: ${registration.scope}`);
+            })
+            .catch(err => {
+                console.log(`Service Worker registration failed: ${err}`);
+            });
+    });
+}
+
 const container = document.getElementById('container');
 const offlineMessage = document.getElementById('offline');
 const noDataMessage = document.getElementById('no-data');
@@ -27,58 +39,93 @@ addEventButton.addEventListener('click', addAndPostEvent);
 
 Notification.requestPermission();
 
-// TODO - create indexedDB database
+function createIndexedDB() {
+    if (!('indexedDB' in window)) {
+        return null;
+    }
+    return idb.open('dashboardr', 1, function (upgradeDb) {
+        if (!upgradeDb.objectStoreNames.contains('events')) {
+            const eventsOS = upgradeDb.createObjectStore('events', {
+                keyPath: 'id'
+            });
+        }
+    });
+}
+
+const dbPromise = createIndexedDB();
 
 loadContentNetworkFirst();
 
 function loadContentNetworkFirst() {
-  getServerData()
-  .then(dataFromNetwork => {
-    updateUI(dataFromNetwork);
-  }).catch(err => { // if we can't connect to the server...
-    console.log('Network requests have failed, this is expected if offline');
-  });
+    getServerData()
+        .then(dataFromNetwork => {
+            updateUI(dataFromNetwork);
+            saveEventDataLocally(dataFromNetwork)
+                .then(() => {
+                    setLastUpdated(new Date());
+                    messageDataSaved();
+                }).catch(err => {
+                    messageSaveError();
+                    console.warn(err);
+                });
+        }).catch(err => { // if we can't connect to the server...
+            console.log('Network requests have failed, this is expected if offline');
+            getLocalEventData()
+                .then(offlineData => {
+                    if (!offlineData.length) {
+                        console.log('test1');
+                        messageNoData();
+                    } else {
+                        console.log('test1');
+                        messageOffline();
+                        updateUI(offlineData);
+                    }
+                });
+        });
 }
 
 /* Network functions */
 
 function getServerData() {
-  return fetch('api/getAll').then(response => {
-    if (!response.ok) {
-      throw Error(response.statusText);
-    }
-    return response.json();
-  });
+    return fetch('api/getAll').then(response => {
+        if (!response.ok) {
+            throw Error(response.statusText);
+        }
+        return response.json();
+    });
 }
 
 function addAndPostEvent(e) {
-  e.preventDefault();
-  const data = {
-    id: Date.now(),
-    title: document.getElementById('title').value,
-    date: document.getElementById('date').value,
-    city: document.getElementById('city').value,
-    note: document.getElementById('note').value
-  };
-  updateUI([data]);
+    e.preventDefault();
+    const data = {
+        id: Date.now(),
+        title: document.getElementById('title').value,
+        date: document.getElementById('date').value,
+        city: document.getElementById('city').value,
+        note: document.getElementById('note').value
+    };
+    updateUI([data]);
 
-  // TODO - save event data locally
+    // TODO - save event data locally
+    saveEventDataLocally([data]);
 
-  const headers = new Headers({'Content-Type': 'application/json'});
-  const body = JSON.stringify(data);
-  return fetch('api/add', {
-    method: 'POST',
-    headers: headers,
-    body: body
-  });
+    const headers = new Headers({
+        'Content-Type': 'application/json'
+    });
+    const body = JSON.stringify(data);
+    return fetch('api/add', {
+        method: 'POST',
+        headers: headers,
+        body: body
+    });
 }
 
 /* UI functions */
 
 function updateUI(events) {
-  events.forEach(event => {
-    const item =
-      `<li class="card">
+    events.forEach(event => {
+        const item =
+            `<li class="card">
          <div class="card-text">
            <h2>${event.title}</h2>
            <h4>${event.date}</h4>
@@ -86,42 +133,70 @@ function updateUI(events) {
            <p>${event.note}</p>
          </div>
        </li>`;
-    container.insertAdjacentHTML('beforeend', item);
-  });
+        container.insertAdjacentHTML('beforeend', item);
+    });
 }
 
 function messageOffline() {
-  // alert user that data may not be current
-  const lastUpdated = getLastUpdated();
-  if (lastUpdated) {
-    offlineMessage.textContent += ' Last fetched server data: ' + lastUpdated;
-  }
-  offlineMessage.style.display = 'block';
+    // alert user that data may not be current
+    const lastUpdated = getLastUpdated();
+    if (lastUpdated) {
+        offlineMessage.textContent += ' Last fetched server data: ' + lastUpdated;
+    }
+    offlineMessage.style.display = 'block';
 }
 
 function messageNoData() {
-  // alert user that there is no data available
-  noDataMessage.style.display = 'block';
+    // alert user that there is no data available
+    noDataMessage.style.display = 'block';
 }
 
 function messageDataSaved() {
-  // alert user that data has been saved for offline
-  const lastUpdated = getLastUpdated();
-  if (lastUpdated) {dataSavedMessage.textContent += ' on ' + lastUpdated;}
-  dataSavedMessage.style.display = 'block';
+    // alert user that data has been saved for offline
+    const lastUpdated = getLastUpdated();
+    if (lastUpdated) {
+        dataSavedMessage.textContent += ' on ' + lastUpdated;
+    }
+    dataSavedMessage.style.display = 'block';
 }
 
 function messageSaveError() {
-  // alert user that data couldn't be saved offline
-  saveErrorMessage.style.display = 'block';
+    // alert user that data couldn't be saved offline
+    saveErrorMessage.style.display = 'block';
 }
 
 /* Storage functions */
 
 function getLastUpdated() {
-  return localStorage.getItem('lastUpdated');
+    return localStorage.getItem('lastUpdated');
 }
 
 function setLastUpdated(date) {
-  localStorage.setItem('lastUpdated', date);
+    localStorage.setItem('lastUpdated', date);
+}
+
+function saveEventDataLocally(events) {
+    if (!('indexedDB' in window)) {
+        return null;
+    }
+    return dbPromise.then(db => {
+        const tx = db.transaction('events', 'readwrite');
+        const store = tx.objectStore('events');
+        return Promise.all(events.map(event => store.put(event)))
+            .catch(() => {
+                tx.abort();
+                throw Error('Events were not added to the store');
+            });
+    });
+}
+
+function getLocalEventData() {
+    if (!('indexedDB' in window)) {
+        return null;
+    }
+    return dbPromise.then(db => {
+        const tx = db.transaction('events', 'readonly');
+        const store = tx.objectStore('events');
+        return store.getAll();
+    });
 }

@@ -3,6 +3,10 @@
   "version": "2.0.0",
   "description": "",
   "main": "db_setup.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "gulp && concurrently --kill-others \"gulp watch\" \"node server.js\""
+  },
   "dependencies": {
     "body-parser": "^1.18.2",
     "express": "^4.16.3",
@@ -13,10 +17,6 @@
     "del": "^3.0.0",
     "gulp": "^4.0.0",
     "workbox-build": "^3.5.0"
-  },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "gulp && concurrently --kill-others \"gulp watch\" \"node server.js\""
   },
   "author": "",
   "license": "ISC"
